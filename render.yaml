@@ -1,0 +1,83 @@
+services:
+  # 1. Frontend de Dify
+  - type: web
+    name: dify-web
+    env: docker
+    dockerContext: ./web
+    plan: starter
+    envVars:
+      - key: CONSOLE_API_URL
+        value: https://api-dify.onrender.com # Tu URL del backend
+      - key: APP_API_URL
+        value: https://api-dify.onrender.com
+
+  # 2. Backend API (Cerebro)
+  - type: web
+    name: dify-api
+    env: docker
+    dockerContext: ./api
+    plan: standard # Necesita más RAM para procesar archivos
+    numInstances: 1
+    healthCheckPath: /health
+    envVars:
+      - key: DB_USERNAME
+        fromDatabase:
+          name: dify-postgres
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: dify-postgres
+          property: password
+      - key: DB_HOST
+        fromDatabase:
+          name: dify-postgres
+          property: host
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: dify-redis
+          property: connectionString
+      - key: VECTOR_DATABASE
+        value: weaviate
+      - key: WEAVIATE_ENDPOINT
+        value: http://dify-weaviate:8080
+
+  # 3. Worker (Procesamiento de Indexación en Fondo)
+  - type: worker
+    name: dify-worker
+    env: docker
+    dockerContext: ./api
+    dockerCommand: celery -A app.celery worker -P gevent -c 1 -Q dataset,generation,mail
+    plan: starter
+    envVars:
+      - key: DB_USERNAME
+        fromDatabase:
+          name: dify-postgres
+          property: user
+      # ... (mismas variables de DB y Redis que el API)
+
+  # 4. Vector DB (Base de datos de vectores)
+  - type: pserv
+    name: dify-weaviate
+    env: docker
+    image: semitechnologies/weaviate:1.19.6
+    disk:
+      name: weaviate-data
+      mountPath: /var/lib/weaviate
+      sizeGB: 10
+    envVars:
+      - key: QUERY_DEFAULTS_LIMIT
+        value: 25
+      - key: AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED
+        value: 'true'
+
+databases:
+  - name: dify-postgres
+    plan: starter
+    databaseName: dify
+    user: dify_user
+
+services:
+  - type: redis
+    name: dify-redis
+    plan: starter
